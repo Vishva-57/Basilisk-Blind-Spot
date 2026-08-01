@@ -2,6 +2,8 @@ import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
 import AxeBuilder from "@axe-core/playwright";
 import type { AxeResults } from "axe-core";
+import axe from "axe-core";
+import { JSDOM } from "jsdom";
 import {
   normalizeViolationsWithBounds,
   countBySeverity,
@@ -51,6 +53,52 @@ export type RawAuditResult = {
   screenshot?: ScanReport["screenshot"];
   boundsByTarget: Map<string, ElementBounds>;
 };
+
+async function runJsdomAudit(url: string): Promise<RawAuditResult> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === "TimeoutError";
+    throw new AuditError(
+      isTimeout
+        ? "The site took too long to load. Try again or check the URL."
+        : "Could not reach that website. Check the URL and try again.",
+      isTimeout ? "TIMEOUT" : "NAVIGATION"
+    );
+  }
+
+  if (!response.ok) {
+    throw new AuditError(
+      `Could not load website (HTTP ${response.status}). Check the URL and try again.`,
+      "NAVIGATION"
+    );
+  }
+
+  const html = await response.text();
+  const dom = new JSDOM(html, { url });
+
+  const axeResults = await axe.run(dom.window.document.documentElement as unknown as Element, {
+    runOnly: {
+      type: "tag",
+      values: ["wcag2a", "wcag2aa", "wcag21aa"],
+    },
+  });
+
+  return {
+    url,
+    axeResults,
+    boundsByTarget: new Map(),
+  };
+}
 
 async function launchBrowser(): Promise<Browser> {
   try {
@@ -185,24 +233,34 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
 
     return { url, axeResults, screenshot, boundsByTarget };
   } catch (error) {
-    console.error("Underlying Playwright Error:", error);
     if (error instanceof AuditError) throw error;
 
-    const message =
-      error instanceof Error ? error.message : "An unexpected error occurred.";
-    if (message.toLowerCase().includes("timeout")) {
+    console.warn("Playwright browser failed, attempting JSDOM serverless audit engine...", error);
+    try {
+      return await runJsdomAudit(url);
+    } catch (fallbackError) {
+      if (fallbackError instanceof AuditError) throw fallbackError;
+
+      const message =
+        fallbackError instanceof Error ? fallbackError.message : "An unexpected error occurred.";
+      if (message.toLowerCase().includes("timeout")) {
+        throw new AuditError(
+          "The site took too long to load. Try again or check the URL.",
+          "TIMEOUT"
+        );
+      }
       throw new AuditError(
-        "The site took too long to load. Try again or check the URL.",
-        "TIMEOUT"
+        "Could not complete the accessibility scan. Please try again.",
+        "UNKNOWN"
       );
     }
-    throw new AuditError(
-      "Could not complete the accessibility scan. Please try again.",
-      "UNKNOWN"
-    );
   } finally {
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+      } catch {
+        // Ignore browser closing error on serverless tear-down
+      }
     }
   }
 }
