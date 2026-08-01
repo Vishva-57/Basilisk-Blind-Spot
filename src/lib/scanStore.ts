@@ -1,5 +1,5 @@
 import type { ScanReport } from "@/lib/types/report";
-import { prisma, ensureTablesExist } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 export type StoredScan = {
   id: string;
@@ -16,6 +16,28 @@ const globalForScanStore = globalThis as unknown as {
 export const scanCache =
   globalForScanStore.scanCache ?? new Map<string, StoredScan>();
 globalForScanStore.scanCache = scanCache;
+
+let tablesEnsured = false;
+
+async function ensureTablesExist() {
+  if (tablesEnsured) return;
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Scan" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "url" TEXT NOT NULL,
+        "score" INTEGER NOT NULL,
+        "results" TEXT NOT NULL,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Scan_url_idx" ON "Scan"("url");`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Scan_createdAt_idx" ON "Scan"("createdAt");`);
+    tablesEnsured = true;
+  } catch (err) {
+    console.warn("Could not auto-create Scan table:", err);
+  }
+}
 
 export async function saveScan(
   url: string,
