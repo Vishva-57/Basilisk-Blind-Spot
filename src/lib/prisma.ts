@@ -40,6 +40,7 @@ if (process.env.NODE_ENV !== "production") {
 
 let tablesEnsured = false;
 
+// Ensures SQLite database tables exist on serverless deployments
 export async function ensureTablesExist() {
   if (tablesEnsured) return;
   try {
