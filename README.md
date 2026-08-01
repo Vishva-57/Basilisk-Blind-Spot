@@ -1,5 +1,7 @@
 # Basilisk — Accessibility Auditing Platform
 
+🌐 **Live Demo:** [https://basiliskblindspot.netlify.app/](https://basiliskblindspot.netlify.app/)
+
 Basilisk scans any public website for **WCAG 2.1 AA** accessibility issues using Playwright + axe-core, then delivers a scored, plain-English report with fix guidance.
 
 Built for hackathon demo — stable, readable, and keyboard-accessible.
