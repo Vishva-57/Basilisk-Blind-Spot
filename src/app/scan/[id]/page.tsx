@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { getScanById } from "@/lib/scanStore";
 import { Scorecard } from "@/components/Scorecard";
 import { CategoryBreakdown } from "@/components/CategoryBreakdown";
 import { ViolationList } from "@/components/ViolationList";
 import { ScreenshotPreview } from "@/components/ScreenshotPreview";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
-import type { ScanReport } from "@/lib/types/report";
 
 type PageProps = {
   params: { id: string };
@@ -20,15 +19,13 @@ function formatDate(iso: string): string {
 }
 
 export default async function ScanReportPage({ params }: PageProps) {
-  const scan = await prisma.scan.findUnique({
-    where: { id: params.id },
-  });
+  const scan = await getScanById(params.id);
 
   if (!scan) {
     notFound();
   }
 
-  const report = JSON.parse(scan.results) as ScanReport;
+  const report = scan.report;
 
   return (
     <main id="main-content" className="mx-auto max-w-6xl px-4 py-8 sm:px-6">

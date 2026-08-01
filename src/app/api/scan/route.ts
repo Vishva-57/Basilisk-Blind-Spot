@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
   runAudit,
   buildReportFromAxe,
   AuditError,
 } from "@/lib/audit/runAudit";
 import type { ScanReport } from "@/lib/types/report";
+import { saveScan } from "@/lib/scanStore";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,16 +31,10 @@ export async function POST(request: NextRequest) {
       boundsByTarget
     );
 
-    const scan = await prisma.scan.create({
-      data: {
-        url: normalizedUrl,
-        score: report.score,
-        results: JSON.stringify(report),
-      },
-    });
+    const scanId = await saveScan(normalizedUrl, report.score, report);
 
     return NextResponse.json({
-      id: scan.id,
+      id: scanId,
       score: report.score,
       summary: {
         severityCounts: report.severityCounts,

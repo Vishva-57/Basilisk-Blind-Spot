@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import type { ScanReport } from "@/lib/types/report";
+import { getScanById } from "@/lib/scanStore";
 
 export const runtime = "nodejs";
 
@@ -8,9 +7,7 @@ export async function GET(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
-  const scan = await prisma.scan.findUnique({
-    where: { id: params.id },
-  });
+  const scan = await getScanById(params.id);
 
   if (!scan) {
     return NextResponse.json({ error: "Scan not found." }, { status: 404 });
@@ -20,7 +17,7 @@ export async function GET(
     id: scan.id,
     url: scan.url,
     score: scan.score,
-    createdAt: scan.createdAt.toISOString(),
-    report: JSON.parse(scan.results) as ScanReport,
+    createdAt: scan.createdAt,
+    report: scan.report,
   });
 }
