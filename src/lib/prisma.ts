@@ -37,3 +37,25 @@ export const prisma =
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
+
+let tablesEnsured = false;
+
+export async function ensureTablesExist() {
+  if (tablesEnsured) return;
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Scan" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "url" TEXT NOT NULL,
+        "score" INTEGER NOT NULL,
+        "results" TEXT NOT NULL,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Scan_url_idx" ON "Scan"("url");`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Scan_createdAt_idx" ON "Scan"("createdAt");`);
+    tablesEnsured = true;
+  } catch (err) {
+    console.warn("Could not auto-create Scan table:", err);
+  }
+}
