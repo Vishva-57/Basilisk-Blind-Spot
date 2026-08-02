@@ -49,8 +49,10 @@ export async function POST(request: NextRequest) {
     }
 
     console.error("Scan failed:", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Could not complete the scan. Please try again.";
     return NextResponse.json(
-      { error: "Could not complete the scan. Please try again." },
+      { error: errorMessage },
       { status: 500 }
     );
   }

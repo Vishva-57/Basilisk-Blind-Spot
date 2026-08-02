@@ -55,36 +55,71 @@ export type RawAuditResult = {
 };
 
 async function runJsdomAudit(url: string): Promise<RawAuditResult> {
-  let response: Response;
+  const originalTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
+  let response: Response | undefined;
+  let targetUrl = url;
+
   try {
-    response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-      },
-      signal: AbortSignal.timeout(25000),
-    });
+    try {
+      response = await fetch(targetUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(20000),
+        redirect: "follow",
+      });
+    } catch (fetchErr) {
+      if (url.startsWith("https://")) {
+        targetUrl = url.replace(/^https:\/\//i, "http://");
+        response = await fetch(targetUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          signal: AbortSignal.timeout(20000),
+          redirect: "follow",
+        });
+      } else {
+        throw fetchErr;
+      }
+    }
   } catch (err) {
-    const isTimeout = err instanceof Error && err.name === "TimeoutError";
+    const isTimeout =
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.message.toLowerCase().includes("timeout"));
     throw new AuditError(
       isTimeout
         ? "The site took too long to load. Try again or check the URL."
         : "Could not reach that website. Check the URL and try again.",
       isTimeout ? "TIMEOUT" : "NAVIGATION"
     );
+  } finally {
+    if (originalTlsReject !== undefined) {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+    } else {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    }
   }
 
-  if (!response.ok) {
+  if (!response || !response.ok) {
+    const statusText = response ? ` (HTTP ${response.status})` : "";
     throw new AuditError(
-      `Could not load website (HTTP ${response.status}). Check the URL and try again.`,
+      `Could not load website${statusText}. Check the URL and try again.`,
       "NAVIGATION"
     );
   }
 
   const html = await response.text();
-  const dom = new JSDOM(html, { url });
+  const dom = new JSDOM(html, { url: targetUrl });
 
   const axeResults = await axe.run(dom.window.document.documentElement as unknown as Element, {
     runOnly: {
@@ -101,26 +136,28 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
 }
 
 async function launchBrowser(): Promise<Browser> {
+  const browserArgs = [
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+    "--disable-gpu",
+    "--ignore-certificate-errors",
+  ];
+
   try {
     return await chromium.launch({
       headless: true,
-      args: ["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"],
+      args: browserArgs,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    const isMissingPlaywrightBrowser =
-      message.includes("Executable doesn't exist") ||
-      message.includes("playwright install");
-
-    if (!isMissingPlaywrightBrowser) {
-      throw error;
+  } catch (firstError) {
+    try {
+      return await chromium.launch({
+        channel: "chrome",
+        headless: true,
+        args: browserArgs,
+      });
+    } catch {
+      throw firstError;
     }
-
-    return chromium.launch({
-      channel: "chrome",
-      headless: true,
-      args: ["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"],
-    });
   }
 }
 
@@ -130,6 +167,7 @@ async function collectTargetBounds(
 ): Promise<Map<string, ElementBounds>> {
   const targets = axeResults.violations.flatMap((violation) =>
     violation.nodes
+      .slice(0, 50)
       .map((node) => {
         const firstTarget = node.target[0];
         if (typeof firstTarget !== "string") return null;
@@ -191,6 +229,7 @@ async function captureScreenshot(
     type: "jpeg",
     quality: 70,
     fullPage: false,
+    timeout: 5000,
   });
 
   return {
@@ -206,34 +245,74 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
 
   try {
     browser = await launchBrowser();
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      viewport: { width: 1280, height: 720 },
+      deviceScaleFactor: 1,
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      },
+    });
+
     const page = await context.newPage();
 
     try {
       await page.goto(url, {
         waitUntil: "domcontentloaded",
-        timeout: 30000,
+        timeout: 25000,
       });
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.includes("Timeout")
-          ? "The site took too long to load. Try again or check the URL."
-          : "Could not reach that website. Check the URL and try again.";
-      throw new AuditError(message, "NAVIGATION");
+    } catch (navError) {
+      console.warn("Playwright domcontentloaded navigation failed/timed out, attempting fallback...", navError);
+      try {
+        await page.goto(url, {
+          waitUntil: "commit",
+          timeout: 15000,
+        });
+      } catch (commitError) {
+        if (url.startsWith("https://")) {
+          const httpUrl = url.replace(/^https:\/\//i, "http://");
+          await page.goto(httpUrl, {
+            waitUntil: "commit",
+            timeout: 15000,
+          });
+        } else {
+          throw commitError;
+        }
+      }
     }
 
     const axeResults = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
       .analyze();
 
-    const [screenshot, boundsByTarget] = await Promise.all([
-      captureScreenshot(page),
-      collectTargetBounds(page, axeResults),
-    ]);
+    let screenshot: ScanReport["screenshot"] | undefined;
+    let boundsByTarget = new Map<string, ElementBounds>();
+
+    try {
+      const results = await Promise.allSettled([
+        captureScreenshot(page),
+        collectTargetBounds(page, axeResults),
+      ]);
+      if (results[0].status === "fulfilled") screenshot = results[0].value;
+      if (results[1].status === "fulfilled") boundsByTarget = results[1].value;
+    } catch (auxErr) {
+      console.warn("Non-critical screenshot or bounds collection issue:", auxErr);
+    }
 
     return { url, axeResults, screenshot, boundsByTarget };
   } catch (error) {
-    if (error instanceof AuditError) throw error;
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        // Ignore browser close error
+      }
+      browser = undefined;
+    }
 
     console.warn("Playwright browser failed, attempting JSDOM serverless audit engine...", error);
     try {
@@ -250,8 +329,8 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
         );
       }
       throw new AuditError(
-        "Could not complete the accessibility scan. Please try again.",
-        "UNKNOWN"
+        "Could not reach that website. Check the URL and try again.",
+        "NAVIGATION"
       );
     }
   } finally {

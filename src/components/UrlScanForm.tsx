@@ -47,7 +47,13 @@ export function UrlScanForm() {
         data = await response.json();
       } else {
         if (!response.ok) {
-          setError(`Server error (${response.status}). The scan may have timed out or failed.`);
+          const text = await response.text().catch(() => "");
+          const is504 = response.status === 504 || text.includes("504") || text.toLowerCase().includes("gateway timeout");
+          setError(
+            is504
+              ? "The scan took too long to complete. Please try scanning again."
+              : `Server error (${response.status}). Could not complete the scan.`
+          );
           setLoading(false);
           return;
         }
