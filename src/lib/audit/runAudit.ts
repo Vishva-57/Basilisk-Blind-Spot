@@ -123,7 +123,10 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
 
   // Mock HTMLCanvasElement.prototype.getContext to prevent JSDOM missing canvas error loops
   try {
-    (dom.window.HTMLCanvasElement.prototype as any).getContext = () => null;
+    Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => null,
+    });
   } catch {
     // Ignore canvas mock failure
   }
@@ -401,7 +404,7 @@ async function executeAudit(url: string): Promise<RawAuditResult> {
 export async function runAudit(urlInput: string): Promise<RawAuditResult> {
   const url = normalizeUrl(urlInput);
 
-  let timeoutTimer: NodeJS.Timeout;
+  let timeoutTimer: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutTimer = setTimeout(() => {
       reject(
@@ -416,7 +419,6 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
   try {
     return await Promise.race([executeAudit(url), timeoutPromise]);
   } finally {
-    // @ts-ignore
     if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
