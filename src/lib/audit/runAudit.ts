@@ -121,7 +121,18 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
   const html = await response.text();
   const dom = new JSDOM(html, { url: targetUrl });
 
-  const axeResults = await axe.run(dom.window.document.documentElement as unknown as Element, {
+  // Mock HTMLCanvasElement.prototype.getContext to prevent JSDOM missing canvas error loops
+  try {
+    (dom.window.HTMLCanvasElement.prototype as any).getContext = () => null;
+  } catch {
+    // Ignore canvas mock failure
+  }
+
+  const doc = dom.window.document;
+  // Prune heavy non-content nodes to ensure execution stays well under serverless timeout limits
+  doc.querySelectorAll("script, style, noscript, svg, footer, #footer, .navbox, .vertical-navbox").forEach((el) => el.remove());
+
+  const axeResults = await axe.run(doc.documentElement as unknown as Element, {
     runOnly: {
       type: "tag",
       values: ["wcag2a", "wcag2aa", "wcag21aa"],
@@ -239,8 +250,18 @@ async function captureScreenshot(
   };
 }
 
-export async function runAudit(urlInput: string): Promise<RawAuditResult> {
-  const url = normalizeUrl(urlInput);
+async function executeAudit(url: string): Promise<RawAuditResult> {
+  const isServerless = Boolean(
+    process.env.VERCEL ||
+    process.env.AWS_EXECUTION_ENV ||
+    process.env.NEXT_RUNTIME === "edge"
+  );
+
+  if (isServerless) {
+    console.log("Serverless environment detected (Vercel), using JSDOM audit engine directly.");
+    return await runJsdomAudit(url);
+  }
+
   let browser: Browser | undefined;
 
   try {
@@ -263,21 +284,21 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
     try {
       await page.goto(url, {
         waitUntil: "domcontentloaded",
-        timeout: 25000,
+        timeout: 15000,
       });
     } catch (navError) {
       console.warn("Playwright domcontentloaded navigation failed/timed out, attempting fallback...", navError);
       try {
         await page.goto(url, {
           waitUntil: "commit",
-          timeout: 15000,
+          timeout: 10000,
         });
       } catch (commitError) {
         if (url.startsWith("https://")) {
           const httpUrl = url.replace(/^https:\/\//i, "http://");
           await page.goto(httpUrl, {
             waitUntil: "commit",
-            timeout: 15000,
+            timeout: 10000,
           });
         } else {
           throw commitError;
@@ -341,6 +362,29 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
         // Ignore browser closing error on serverless tear-down
       }
     }
+  }
+}
+
+export async function runAudit(urlInput: string): Promise<RawAuditResult> {
+  const url = normalizeUrl(urlInput);
+
+  let timeoutTimer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      reject(
+        new AuditError(
+          "The site took too long to load. Try again or check the URL.",
+          "TIMEOUT"
+        )
+      );
+    }, 10000);
+  });
+
+  try {
+    return await Promise.race([executeAudit(url), timeoutPromise]);
+  } finally {
+    // @ts-ignore
+    if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 }
 
