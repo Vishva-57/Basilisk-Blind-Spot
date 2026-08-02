@@ -5,8 +5,9 @@ export const runtime = "nodejs";
 
 export async function GET(
   _request: Request,
-  { params }: { params: { id: string } }
+  props: { params: Promise<{ id: string }> | { id: string } }
 ) {
+  const params = await props.params;
   const scan = await getScanById(params.id);
 
   if (!scan) {

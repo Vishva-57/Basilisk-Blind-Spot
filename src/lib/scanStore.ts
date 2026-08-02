@@ -128,7 +128,7 @@ export async function getAllScansSummary(urlFilter?: string | null) {
       orderBy: { createdAt: "desc" },
     });
 
-    const dbItems = scans.map((scan) => {
+    const dbItems = scans.map((scan: { id: string; url: string; score: number; results: string; createdAt: Date }) => {
       const results = JSON.parse(scan.results) as ScanReport;
       return {
         id: scan.id,

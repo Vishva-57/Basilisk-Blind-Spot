@@ -1,4 +1,3 @@
-import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 
@@ -24,15 +23,22 @@ function setupDatabaseUrl() {
 
 setupDatabaseUrl();
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
+let prismaInstance: any;
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+try {
+  const { PrismaClient } = require("@prisma/client");
+  prismaInstance = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
+} catch {
+  prismaInstance = null;
+}
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: any;
+};
+
+export const prisma = globalForPrisma.prisma ?? prismaInstance;
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -42,7 +48,7 @@ let tablesEnsured = false;
 
 // Ensures SQLite database tables exist on serverless deployments
 export async function ensureTablesExist() {
-  if (tablesEnsured) return;
+  if (tablesEnsured || !prisma) return;
   try {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "Scan" (

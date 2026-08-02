@@ -29,9 +29,10 @@ function generateSvg(score: number): string {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { siteId: string } }
+  props: { params: Promise<{ siteId: string }> | { siteId: string } }
 ) {
   try {
+    const params = await props.params;
     const siteId = params.siteId;
     
     // First try to find by ID

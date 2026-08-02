@@ -8,7 +8,7 @@ import { ScreenshotPreview } from "@/components/ScreenshotPreview";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 
 type PageProps = {
-  params: { id: string };
+  params: Promise<{ id: string }> | { id: string };
 };
 
 function formatDate(iso: string): string {
@@ -18,11 +18,12 @@ function formatDate(iso: string): string {
   });
 }
 
-export default async function ScanReportPage({ params }: PageProps) {
+export default async function ScanReportPage(props: PageProps) {
+  const params = await props.params;
   const scan = await getScanById(params.id);
 
   if (!scan) {
-    notFound();
+    return notFound();
   }
 
   const report = scan.report;
