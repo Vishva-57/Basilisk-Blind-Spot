@@ -1,8 +1,14 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ["playwright", "@axe-core/playwright"],
-  experimental: {
-    serverComponentsExternalPackages: ["playwright", "@axe-core/playwright"],
+  outputFileTracingRoot: __dirname,
+  turbopack: {
+    root: __dirname,
   },
 };
 

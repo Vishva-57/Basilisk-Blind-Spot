@@ -71,7 +71,7 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
         },
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(8000),
         redirect: "follow",
       });
     } catch (fetchErr) {
@@ -85,7 +85,7 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
               "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
           },
-          signal: AbortSignal.timeout(20000),
+          signal: AbortSignal.timeout(8000),
           redirect: "follow",
         });
       } else {
@@ -129,37 +129,44 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
   }
 
   const doc = dom.window.document;
-  // Prune heavy non-content nodes and cap DOM elements to ensure execution completes in 1-3 seconds
-  doc.querySelectorAll("script, style, noscript, svg, iframe, footer, #footer, #mw-navigation, #p-lang-btn, .navbox, .vertical-navbox, .reflist, .catlinks, .mw-editsection").forEach((el) => el.remove());
+  // 1. Remove non-rendered, script, and heavy non-content metadata elements
+  doc.querySelectorAll("script, style, noscript, template, iframe, .reflist, .navbox, .vertical-navbox, #mw-navigation, .catlinks, .mw-editsection").forEach((el) => el.remove());
 
+  // 2. Safely cap repeating list items and table rows (max 12 per container)
   doc.querySelectorAll("table").forEach((table) => {
     const rows = Array.from(table.querySelectorAll("tr"));
-    if (rows.length > 5) {
-      for (let i = 5; i < rows.length; i++) rows[i].remove();
+    if (rows.length > 12) {
+      for (let i = 12; i < rows.length; i++) rows[i].remove();
     }
   });
 
-  doc.querySelectorAll("ul, ol").forEach((list) => {
+  doc.querySelectorAll("ul, ol, dl").forEach((list) => {
     const items = Array.from(list.children);
-    if (items.length > 8) {
-      for (let i = 8; i < items.length; i++) items[i].remove();
+    if (items.length > 12) {
+      for (let i = 12; i < items.length; i++) items[i].remove();
     }
   });
 
-  doc.querySelectorAll("*").forEach((parent) => {
-    if (parent.children.length > 12) {
-      const children = Array.from(parent.children);
-      for (let i = 12; i < children.length; i++) children[i].remove();
-    }
-  });
-
-  const allElements = Array.from(doc.querySelectorAll("*"));
-  if (allElements.length > 1200) {
-    for (let i = 1200; i < allElements.length; i++) {
-      try {
-        allElements[i].remove();
-      } catch {
-        // Ignore
+  // 3. Cap total body elements safely: preserve all key structural & interactive HTML elements
+  const body = doc.body;
+  if (body) {
+    const allBodyElements = Array.from(body.querySelectorAll("*"));
+    if (allBodyElements.length > 1000) {
+      const structuralTags = new Set([
+        "HEADER", "FOOTER", "MAIN", "NAV", "FORM", "SECTION", "ARTICLE",
+        "H1", "H2", "H3", "H4", "H5", "H6", "INPUT", "BUTTON", "SELECT", "TEXTAREA", "LABEL", "A", "IMG"
+      ]);
+      let count = 0;
+      for (const el of allBodyElements) {
+        if (!doc.body.contains(el)) continue;
+        count++;
+        if (count > 1000 && !structuralTags.has(el.tagName)) {
+          try {
+            el.remove();
+          } catch {
+            // Ignore
+          }
+        }
       }
     }
   }
@@ -410,7 +417,7 @@ export async function runAudit(urlInput: string): Promise<RawAuditResult> {
           "TIMEOUT"
         )
       );
-    }, 10000);
+    }, 15000);
   });
 
   try {
