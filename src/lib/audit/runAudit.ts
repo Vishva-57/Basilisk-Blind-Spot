@@ -129,8 +129,40 @@ async function runJsdomAudit(url: string): Promise<RawAuditResult> {
   }
 
   const doc = dom.window.document;
-  // Prune heavy non-content nodes to ensure execution stays well under serverless timeout limits
-  doc.querySelectorAll("script, style, noscript, svg, footer, #footer, .navbox, .vertical-navbox").forEach((el) => el.remove());
+  // Prune heavy non-content nodes and cap DOM elements to ensure execution completes in 1-3 seconds
+  doc.querySelectorAll("script, style, noscript, svg, iframe, footer, #footer, #mw-navigation, #p-lang-btn, .navbox, .vertical-navbox, .reflist, .catlinks, .mw-editsection").forEach((el) => el.remove());
+
+  doc.querySelectorAll("table").forEach((table) => {
+    const rows = Array.from(table.querySelectorAll("tr"));
+    if (rows.length > 5) {
+      for (let i = 5; i < rows.length; i++) rows[i].remove();
+    }
+  });
+
+  doc.querySelectorAll("ul, ol").forEach((list) => {
+    const items = Array.from(list.children);
+    if (items.length > 8) {
+      for (let i = 8; i < items.length; i++) items[i].remove();
+    }
+  });
+
+  doc.querySelectorAll("*").forEach((parent) => {
+    if (parent.children.length > 12) {
+      const children = Array.from(parent.children);
+      for (let i = 12; i < children.length; i++) children[i].remove();
+    }
+  });
+
+  const allElements = Array.from(doc.querySelectorAll("*"));
+  if (allElements.length > 1200) {
+    for (let i = 1200; i < allElements.length; i++) {
+      try {
+        allElements[i].remove();
+      } catch {
+        // Ignore
+      }
+    }
+  }
 
   const axeResults = await axe.run(doc.documentElement as unknown as Element, {
     runOnly: {
@@ -253,12 +285,13 @@ async function captureScreenshot(
 async function executeAudit(url: string): Promise<RawAuditResult> {
   const isServerless = Boolean(
     process.env.VERCEL ||
+    process.env.NETLIFY ||
     process.env.AWS_EXECUTION_ENV ||
     process.env.NEXT_RUNTIME === "edge"
   );
 
   if (isServerless) {
-    console.log("Serverless environment detected (Vercel), using JSDOM audit engine directly.");
+    console.log("Serverless environment detected (Vercel/Netlify), using JSDOM audit engine directly.");
     return await runJsdomAudit(url);
   }
 
